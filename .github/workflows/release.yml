@@ -1,0 +1,140 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish (without leading "v"), e.g. 0.5.0
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ─── Native libs (same matrix as build.yml) ──────────────────────────────
+  build-native:
+    name: native (${{ matrix.classifier }})
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-latest
+            classifier: macos-aarch64
+          - os: macos-13
+            classifier: macos-x86_64
+          - os: ubuntu-latest
+            classifier: linux-x86_64
+          - os: windows-latest
+            classifier: windows-x86_64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Linux build prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxi-dev libxext-dev
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build native library
+        run: ./gradlew :stylus-jni:assembleNative --no-daemon --stacktrace
+
+      - name: Upload native artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.classifier }}
+          path: stylus-jni/build/native/${{ matrix.classifier }}/
+          retention-days: 14
+          if-no-files-found: error
+
+  # ─── Publish to Maven Central ────────────────────────────────────────────
+  # Runs on macOS so iOS framework publications can be built. Pulls each
+  # platform's native lib from the matrix above and publishes both `:stylus`
+  # and `:stylus-compose` to the Sonatype Central Portal.
+  publish:
+    name: publish to Maven Central
+    needs: build-native
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve release version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            # tag form: v1.2.3 → 1.2.3
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing version: $VERSION"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Download all native artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: stylus-jni/build/native
+          pattern: native-*
+
+      - name: Reorganize native artifacts
+        run: |
+          set -eux
+          cd stylus-jni/build/native
+          for d in native-*; do
+            classifier="${d#native-}"
+            mkdir -p "$classifier"
+            mv "$d"/* "$classifier/"
+            rmdir "$d"
+          done
+          find . -type f
+
+      - name: Publish to Maven Central
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_PASSWORD }}
+        run: |
+          ./gradlew \
+            -Pversion="${{ steps.version.outputs.version }}" \
+            -PskipNativeBuild \
+            :stylus:publishAllPublicationsToMavenCentralRepository \
+            :stylus-compose:publishAllPublicationsToMavenCentralRepository \
+            --no-daemon --stacktrace
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        if: github.event_name == 'push'
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }}

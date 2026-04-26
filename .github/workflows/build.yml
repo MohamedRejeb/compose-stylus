@@ -1,0 +1,168 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── Native libs ──────────────────────────────────────────────────────────
+  # One job per (OS × arch). Each builds libstylus for its own classifier and
+  # uploads the result. The package-jar job downstream stitches them together.
+  build-native:
+    name: native (${{ matrix.classifier }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest    # Apple Silicon
+            classifier: macos-aarch64
+          - os: macos-13        # Intel
+            classifier: macos-x86_64
+          - os: ubuntu-latest
+            classifier: linux-x86_64
+          - os: windows-latest
+            classifier: windows-x86_64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Linux build prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxi-dev libxext-dev
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build native library
+        run: ./gradlew :stylus-jni:assembleNative --no-daemon --stacktrace
+
+      - name: Upload native artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.classifier }}
+          path: stylus-jni/build/native/${{ matrix.classifier }}/
+          retention-days: 14
+          if-no-files-found: error
+
+  # ─── Universal JAR ────────────────────────────────────────────────────────
+  # Pulls each per-classifier artifact, lays them out under
+  # stylus-jni/build/native/<classifier>/, and runs the JVM jar build with
+  # `-PskipNativeBuild` so it doesn't try to rebuild any of them locally.
+  package-jar:
+    name: package multiplatform JAR
+    needs: build-native
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Download all native artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: stylus-jni/build/native
+          pattern: native-*
+
+      # `download-artifact` lays artifacts out as
+      # `stylus-jni/build/native/native-<classifier>/<file>`. The runtime
+      # NativeLoader expects `native/<classifier>/<file>` — so flatten.
+      - name: Reorganize native artifacts
+        run: |
+          set -eux
+          cd stylus-jni/build/native
+          for d in native-*; do
+            classifier="${d#native-}"
+            mkdir -p "$classifier"
+            mv "$d"/* "$classifier/"
+            rmdir "$d"
+          done
+          find . -type f
+
+      - name: Build multiplatform JAR
+        run: ./gradlew :stylus:jvmJar -PskipNativeBuild --no-daemon --stacktrace
+
+      - name: Run JVM unit & pipeline tests
+        run: ./gradlew :stylus:jvmTest :stylus-compose:jvmTest -PskipNativeBuild --no-daemon --stacktrace
+
+      - name: Upload multiplatform JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: stylus-multiplatform-jar
+          path: stylus/build/libs/*.jar
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            stylus/build/reports/tests/jvmTest/
+            stylus-compose/build/reports/tests/jvmTest/
+          retention-days: 7
+
+  # ─── Other targets ────────────────────────────────────────────────────────
+  # Android, iOS, wasmJs don't depend on the native libs (they use their own
+  # platform input APIs / Compose pointer events). Run these in parallel with
+  # the matrix above as a sanity check.
+  build-non-jvm:
+    name: check (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: android
+            tasks: ":stylus:compileDebugKotlinAndroid :stylus-compose:compileDebugKotlinAndroid"
+            os: ubuntu-latest
+          - target: ios
+            tasks: ":stylus:compileKotlinIosArm64 :stylus-compose:compileKotlinIosArm64"
+            os: macos-latest
+          - target: wasmJs
+            tasks: ":stylus:compileKotlinWasmJs :stylus-compose:compileKotlinWasmJs"
+            os: ubuntu-latest
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compile ${{ matrix.target }}
+        run: ./gradlew ${{ matrix.tasks }} -PskipNativeBuild --no-daemon --stacktrace

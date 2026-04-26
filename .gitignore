@@ -1,0 +1,36 @@
+# Eclipse Core
+**/.classpath
+**/.project
+**/.settings/
+
+# IntelliJ IDEA
+**/*.iml
+**/.idea
+
+# Maven Build
+**/target
+
+# Gradle
+.gradle/
+**/build/
+build-logic/build/
+local.properties
+.kotlin/
+
+# OS
+.DS_Store
+**/.DS_Store
+
+# JVM crash logs
+hs_err_pid*.log
+replay_pid*.log
+
+# Compiled libraries (these are build artifacts; native binaries that ship as
+# resources live under stylus/src/jvmMain/resources/ and ARE checked in)
+*.so
+*.dylib
+*.dll
+
+# Claude state (private session data)
+.claude
+kotlin-js-store
