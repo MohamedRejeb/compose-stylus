@@ -130,9 +130,8 @@ jobs:
           ./gradlew \
             -Pversion="${{ steps.version.outputs.version }}" \
             -PskipNativeBuild \
-            :stylus:publishAllPublicationsToMavenCentralRepository \
-            :stylus-compose:publishAllPublicationsToMavenCentralRepository \
-            --no-daemon --stacktrace
+            publishAndReleaseToMavenCentral \
+            --no-daemon --stacktrace --no-configuration-cache
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2

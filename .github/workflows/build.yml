@@ -185,9 +185,8 @@ jobs:
         run: |
           ./gradlew \
             -PskipNativeBuild \
-            :stylus:publishAllPublicationsToMavenCentralRepository \
-            :stylus-compose:publishAllPublicationsToMavenCentralRepository \
-            --no-daemon --stacktrace
+            publishAndReleaseToMavenCentral \
+            --no-daemon --stacktrace --no-configuration-cache
 
   # ─── Other targets ────────────────────────────────────────────────────────
   # Android, iOS, wasmJs don't depend on the native libs (they use their own

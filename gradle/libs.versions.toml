@@ -6,7 +6,7 @@ kotlinx-coroutines = "1.10.2"
 kotlinx-serialization = "1.9.0"
 
 # Android
-agp = "8.11.0"
+agp = "8.13.2"
 android-compileSdk = "36"
 android-minSdk = "24"
 android-targetSdk = "36"
@@ -15,7 +15,7 @@ androidx-core-ktx = "1.16.0"
 androidx-lifecycle = "2.9.0"
 
 # Build / publishing
-maven-publish-plugin = "0.30.0"
+maven-publish-plugin = "0.36.0"
 
 # Web
 kotlinx-browser = "0.4"
