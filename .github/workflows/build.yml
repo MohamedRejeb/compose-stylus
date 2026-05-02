@@ -24,14 +24,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest    # Apple Silicon
+          - os: macos-latest    # Apple Silicon (native)
             classifier: macos-aarch64
-          - os: macos-13        # Intel
+            gradleArgs: ""
+          - os: macos-latest    # Apple Silicon → cross-compile to Intel
             classifier: macos-x86_64
+            gradleArgs: "-PnativeArch=x86_64"
           - os: ubuntu-latest
             classifier: linux-x86_64
+            gradleArgs: ""
           - os: windows-latest
             classifier: windows-x86_64
+            gradleArgs: ""
 
     runs-on: ${{ matrix.os }}
 
@@ -54,7 +58,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build native library
-        run: ./gradlew :stylus-jni:assembleNative --no-daemon --stacktrace
+        run: ./gradlew :stylus-jni:assembleNative ${{ matrix.gradleArgs }} --no-daemon --stacktrace
 
       - name: Upload native artifact
         uses: actions/upload-artifact@v4

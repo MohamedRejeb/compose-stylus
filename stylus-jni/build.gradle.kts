@@ -9,23 +9,38 @@ description = "Native JNI shared library for the stylus library (desktop only)"
 // ─── Platform classifier ─────────────────────────────────────────────────────────
 // Pick the classifier sub-directory to install the native artifact into.
 // NativeLoader on the JVM side maps `os.name` × `os.arch` to the same string.
+//
+// `-PnativeArch=x86_64` (or `aarch64`) overrides the host arch. Used in CI to
+// cross-build the macOS x86_64 dylib on an Apple Silicon runner — the macos-13
+// (Intel) runner has poor scheduling latency.
+val nativeArchOverride: String? =
+    (project.findProperty("nativeArch") as? String)?.lowercase()?.takeIf { it.isNotBlank() }
+
+val archName: String = when (nativeArchOverride ?: System.getProperty("os.arch").lowercase()) {
+    "amd64", "x86_64" -> "x86_64"
+    "aarch64", "arm64" -> "aarch64"
+    else -> error("Unsupported arch: ${nativeArchOverride ?: System.getProperty("os.arch")}")
+}
+
 val classifier: String = run {
     val os = OperatingSystem.current()
-    val arch = System.getProperty("os.arch").lowercase()
-
     val osName = when {
         os.isMacOsX -> "macos"
         os.isLinux -> "linux"
         os.isWindows -> "windows"
         else -> error("Unsupported OS: ${os.name}")
     }
-    val archName = when (arch) {
-        "amd64", "x86_64" -> "x86_64"
-        "aarch64", "arm64" -> "aarch64"
-        else -> error("Unsupported arch: $arch")
-    }
     "$osName-$archName"
 }
+
+// CMake's -DCMAKE_OSX_ARCHITECTURES uses Apple's arch names ("arm64", "x86_64").
+val macOsxArch: String? = if (OperatingSystem.current().isMacOsX) {
+    when (archName) {
+        "aarch64" -> "arm64"
+        "x86_64" -> "x86_64"
+        else -> null
+    }
+} else null
 
 // ─── Paths ───────────────────────────────────────────────────────────────────────
 val cppDir = layout.projectDirectory.dir("src/main/cpp").asFile
@@ -66,6 +81,10 @@ val configureNative by tasks.registering(Exec::class) {
         add("-DCMAKE_BUILD_TYPE=Release")
         add("-DCMAKE_INSTALL_PREFIX=${installDir.absolutePath}")
         add("-DJAVA_HOME=$javaHome")
+        if (macOsxArch != null) {
+            // Cross-compile target arch on macOS (e.g. x86_64 on an arm64 runner).
+            add("-DCMAKE_OSX_ARCHITECTURES=$macOsxArch")
+        }
         if (OperatingSystem.current().isWindows) {
             add("-A"); add("x64")
         }
