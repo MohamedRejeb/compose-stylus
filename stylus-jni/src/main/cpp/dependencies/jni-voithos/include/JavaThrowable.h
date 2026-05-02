@@ -12,6 +12,7 @@
 #include "JavaClasses.h"
 
 #include <jni.h>
+#include <cstdint>
 #include <string>
 #include <typeindex>
 #include <unordered_map>

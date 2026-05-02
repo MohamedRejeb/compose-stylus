@@ -15,6 +15,7 @@
 #include "JavaRef.h"
 #include "JavaUtils.h"
 
+#include <cstdint>
 #include <vector>
 
 namespace jni

@@ -9,6 +9,7 @@
 #define JNI_EXCEPTION_H_
 
 #include <stdarg.h>
+#include <cstdint>
 #include <string>
 
 #ifndef _MSC_VER

@@ -32,9 +32,14 @@ val cppDir = layout.projectDirectory.dir("src/main/cpp").asFile
 val cmakeBuildDir = layout.buildDirectory.dir("cmake/$classifier")
 val nativeInstallDir = layout.buildDirectory.dir("native/$classifier")
 
-val javaHome: String = System.getProperty("java.home")
+val javaHome: String = (System.getProperty("java.home")
     ?: System.getenv("JAVA_HOME")
-    ?: error("JAVA_HOME is not set and java.home is unavailable")
+    ?: error("JAVA_HOME is not set and java.home is unavailable"))
+    // CMake parses -D values as CMake strings; backslashes in Windows paths
+    // (e.g. C:\hostedtoolcache\...) are interpreted as escape sequences and
+    // FindJNI.cmake fails with "Invalid character escape '\h'". Forward slashes
+    // are valid on Windows for both CMake and the JDK include lookup.
+    .replace('\\', '/')
 
 // ─── Tasks ───────────────────────────────────────────────────────────────────────
 val configureNative by tasks.registering(Exec::class) {
