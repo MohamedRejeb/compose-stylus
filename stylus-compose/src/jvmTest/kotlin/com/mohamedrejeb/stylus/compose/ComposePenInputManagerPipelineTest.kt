@@ -15,7 +15,7 @@ import kotlin.test.assertTrue
 /**
  * End-to-end test of the Compose-side pen input pipeline.
  *
- * `attachWithoutNative` + `dispatchSynthetic` drive the exact same callback
+ * `registerState` + `dispatchSynthetic` drive the exact same callback
  * chain that real native events traverse on Desktop —
  * `ComponentScopedCallback` → `translateToComponent` → `containsTranslated` →
  * user callback — without depending on the JNI swizzle, a real `NSEvent`
@@ -50,7 +50,7 @@ class ComposePenInputManagerPipelineTest {
         size: Size = Size(200f, 100f),
         topLeft: Offset = Offset(10f, 20f),
     ) {
-        mgr.attachWithoutNative(key, recorder)
+        mgr.registerState(key, recorder)
         mgr.updateSize(key, size)
         mgr.updateTopLeft(key, topLeft)
     }
@@ -172,6 +172,34 @@ class ComposePenInputManagerPipelineTest {
         // a press ourselves (pressed=false). These should be ignored.
         mgr.dispatchSynthetic("k", nativeEvent(x = 50.0, y = 50.0, type = PenEventType.Move))
         assertTrue(received.isEmpty(), "moves with button held but never claimed should be dropped")
+    }
+
+    // ─── Layout-vs-attach race ─────────────────────────────────────────
+
+    /**
+     * Regression for the "Ink tab listener silent until window resize" bug.
+     *
+     * In the modifier's `onAttach`, state must be registered SYNCHRONOUSLY —
+     * `onPlaced`/`onRemeasured` fire on the same EDT cycle and call
+     * `updateTopLeft`/`updateSize`, which silently no-op if the state map
+     * entry doesn't exist yet. This test mirrors that ordering: register,
+     * then immediately update topLeft/size, then dispatch — and expects the
+     * event to be in-bounds.
+     */
+    @Test
+    fun `updateSize and updateTopLeft right after registerState are honored`() {
+        mgr.registerState("k", recorder)
+        // These calls correspond to onPlaced/onRemeasured firing
+        // immediately after onAttach on the same EDT cycle.
+        mgr.updateTopLeft("k", Offset(50f, 50f))
+        mgr.updateSize("k", Size(200f, 200f))
+
+        // Native (75, 75) − topLeft (50, 50) = component (25, 25), in bounds.
+        mgr.dispatchSynthetic("k", nativeEvent(x = 75.0, y = 75.0, type = PenEventType.Press))
+
+        assertEquals(1, received.size, "in-bounds event must arrive after sync registration")
+        assertEquals(25.0, received.single().x)
+        assertEquals(25.0, received.single().y)
     }
 
     // ─── Listener detach / reset ──────────────────────────────────────

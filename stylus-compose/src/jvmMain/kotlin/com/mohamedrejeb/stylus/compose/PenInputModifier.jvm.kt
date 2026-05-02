@@ -59,6 +59,14 @@ private class PenInputNode(
         // before AWT has registered the new ComposeWindow.
         val providedWindow: Window? = currentValueOf(LocalPenInputWindow)
 
+        // Register state SYNCHRONOUSLY so the onPlaced/onRemeasured callbacks
+        // that fire later on this same EDT cycle find an existing entry to
+        // update. Deferring the registration to invokeLater used to silently
+        // race those callbacks: the state would be created with topLeft=Zero
+        // and size=Zero, the bounds check would reject every event, and the
+        // listener appeared dead until a window resize forced a relayout.
+        ComposePenInputManager.instance.registerState(key, callback)
+
         SwingUtilities.invokeLater {
             val window = providedWindow ?: locateAwtWindow()
             if (window == null) {
@@ -70,8 +78,8 @@ private class PenInputNode(
             }
             attachedWindow = window
             val source = if (providedWindow != null) "LocalPenInputWindow" else "Window.getWindows() fallback"
-            println("[stylus] onAttach: registering key=$key on ${window.javaClass.simpleName} (via $source)")
-            ComposePenInputManager.instance.attach(key, callback, window)
+            println("[stylus] onAttach: wiring key=$key to native on ${window.javaClass.simpleName} (via $source)")
+            ComposePenInputManager.instance.attachNative(key, window)
             // Enable immediately. We can't rely on Compose's PointerEventType.Enter
             // because real-pen hover events on macOS don't always propagate
             // through the AWT mouse pipeline that drives Compose pointer events.

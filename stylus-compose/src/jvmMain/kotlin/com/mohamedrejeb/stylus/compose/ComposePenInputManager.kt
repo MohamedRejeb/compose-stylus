@@ -24,19 +24,29 @@ internal class ComposePenInputManager private constructor() {
 
     var windowTopLeft: Offset = Offset.Zero
 
-    fun attach(key: Any, callback: PenEventCallback, window: Window) {
+    /**
+     * Register [callback] under [key] in the manager's state map. Must run
+     * synchronously from the modifier's `onAttach` — *before* the modifier's
+     * `onPlaced`/`onRemeasured` would otherwise fire on the same EDT cycle
+     * and silently no-op `updateTopLeft`/`updateSize` because the state
+     * entry didn't exist yet. Pure in-memory work; safe to call off-EDT.
+     */
+    fun registerState(key: Any, callback: PenEventCallback) {
         val state = ComponentState()
         state.delegate = callback
         state.callback = ComponentScopedCallback(key, callback)
         states[key] = state
+    }
 
-        // Run synchronously: callers (the modifier's onAttach) are already on
-        // the EDT — they wrap the call in SwingUtilities.invokeLater. Adding
-        // another nested invokeLater here used to race with the modifier's
-        // immediate setEnabled(true) call: setEnabled would run before the
-        // wrapper was registered, silently leaving the native callback
-        // disabled and dropping every event.
-        PenInputSource.Default.attach(state.callback!!, window)
+    /**
+     * Wire the previously [registerState]-ed callback to the native pen
+     * source on [window]. Must run on the EDT — `PenInputSource.attach`
+     * pokes platform input pipelines (Cocoa/X11/Win32) and is not thread-safe.
+     */
+    fun attachNative(key: Any, window: Window) {
+        val state = states[key] ?: return
+        val callback = state.callback ?: return
+        PenInputSource.Default.attach(callback, window)
     }
 
     fun detach(key: Any, window: Window) {
@@ -137,20 +147,8 @@ internal class ComposePenInputManager private constructor() {
     // pipeline real native events take (translateToComponent → bounds filter
     // → ComponentScopedCallback → user callback) without depending on the
     // JNI swizzle, an actual NSEvent stream, or a visible AWT window — none
-    // of which run reliably in a headless CI JVM test.
-
-    /**
-     * Register [callback] under [key] without touching [PenInputSource] or the
-     * native bridge. After this call, [updateSize], [updateTopLeft], and
-     * [dispatchSynthetic] behave the same as if a real native attach had
-     * succeeded.
-     */
-    internal fun attachWithoutNative(key: Any, callback: PenEventCallback) {
-        val state = ComponentState()
-        state.delegate = callback
-        state.callback = ComponentScopedCallback(key, callback)
-        states[key] = state
-    }
+    // of which run reliably in a headless CI JVM test. Use [registerState]
+    // to set up the per-key callback then [dispatchSynthetic] to inject events.
 
     /**
      * Inject [event] into the per-[key] callback pipeline as if it had been
