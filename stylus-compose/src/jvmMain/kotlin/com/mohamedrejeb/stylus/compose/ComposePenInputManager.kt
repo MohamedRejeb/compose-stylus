@@ -59,25 +59,26 @@ internal class ComposePenInputManager private constructor() {
         states[key]?.size = size
     }
 
-    fun updateDensity(key: Any, density: Float) {
-        states[key]?.density = density
-    }
-
     /**
-     * Translate a native [PenEvent] (window-content-local **physical pixels**,
-     * top-left origin — produced by the native JNI bridge) into
-     * component-local DP coordinates that match what Compose draws in:
+     * Translate a native [PenEvent] (window-content-local, top-left origin,
+     * produced by the native JNI bridge) into component-local coordinates:
      *
-     *   componentDp = (nativePx / density) − modifier.positionInWindow
+     *   componentLocal = nativeUnits − modifier.positionInWindow
+     *
+     * Both terms come from the same Compose Desktop layout space — `nativePx`
+     * after the JNI's `* backingScaleFactor` matches what `positionInWindow()`
+     * returns — so a direct subtraction yields component-local coordinates
+     * Compose's DrawScope and pointer modifiers expect, with no density
+     * division required (this matches the `returnValuesInPixel = true` mode
+     * in the upstream stylus-compose port).
      *
      * Returns null if state for [key] hasn't been registered yet (which would
      * mean we shouldn't be dispatching anyway).
      */
     private fun translateToComponent(key: Any, event: PenEvent): PenEvent? {
         val state = states[key] ?: return null
-        val density = state.density.toDouble().takeIf { it > 0.0 } ?: 1.0
-        val xDp = event.x / density - state.topLeft.x
-        val yDp = event.y / density - state.topLeft.y
+        val xDp = event.x - state.topLeft.x
+        val yDp = event.y - state.topLeft.y
         return event.translate(xDp, yDp)
     }
 
@@ -140,9 +141,9 @@ internal class ComposePenInputManager private constructor() {
 
     /**
      * Register [callback] under [key] without touching [PenInputSource] or the
-     * native bridge. After this call, [updateSize], [updateTopLeft],
-     * [updateDensity], and [dispatchSynthetic] behave the same as if a real
-     * native attach had succeeded.
+     * native bridge. After this call, [updateSize], [updateTopLeft], and
+     * [dispatchSynthetic] behave the same as if a real native attach had
+     * succeeded.
      */
     internal fun attachWithoutNative(key: Any, callback: PenEventCallback) {
         val state = ComponentState()
@@ -186,5 +187,4 @@ internal class ComponentState {
     var delegate: PenEventCallback? = null
     var topLeft: Offset = Offset.Zero
     var size: Size = Size.Zero
-    var density: Float = 1f
 }

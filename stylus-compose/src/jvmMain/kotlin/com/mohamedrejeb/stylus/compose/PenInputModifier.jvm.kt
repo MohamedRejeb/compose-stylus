@@ -72,7 +72,6 @@ private class PenInputNode(
             val source = if (providedWindow != null) "LocalPenInputWindow" else "Window.getWindows() fallback"
             println("[stylus] onAttach: registering key=$key on ${window.javaClass.simpleName} (via $source)")
             ComposePenInputManager.instance.attach(key, callback, window)
-            ComposePenInputManager.instance.updateDensity(key, window.nativeScale())
             // Enable immediately. We can't rely on Compose's PointerEventType.Enter
             // because real-pen hover events on macOS don't always propagate
             // through the AWT mouse pipeline that drives Compose pointer events.
@@ -89,9 +88,6 @@ private class PenInputNode(
 
     override fun onPlaced(coordinates: LayoutCoordinates) {
         ComposePenInputManager.instance.updateTopLeft(key, coordinates.positionInWindow())
-        attachedWindow?.let {
-            ComposePenInputManager.instance.updateDensity(key, it.nativeScale())
-        }
     }
 
     override fun onRemeasured(size: IntSize) {
@@ -120,16 +116,3 @@ private class PenInputNode(
         Window.getWindows().firstOrNull { it.isFocused && it.isVisible }
             ?: Window.getWindows().firstOrNull { it.isVisible }
 }
-
-/**
- * Native HiDPI scale of the AWT [Window] — matches the value the JNI bridge
- * uses when multiplying NSEvent / X / Win32 coordinates into physical pixels
- * (e.g. `backingScaleFactor` on macOS Retina). Read from
- * `GraphicsConfiguration.defaultTransform.scaleX`, NOT from `LocalDensity`:
- * Compose Desktop reports `density = 1.0` even on Retina, while the native
- * pen events have already been scaled by the OS factor, so dividing by
- * `LocalDensity.density` would leave the values in physical px and the
- * stroke would land down-and-right of the cursor by `nativeScale - 1`.
- */
-private fun Window.nativeScale(): Float =
-    graphicsConfiguration?.defaultTransform?.scaleX?.toFloat() ?: 1f
