@@ -92,6 +92,57 @@ expect class PenInputSource {
 Compose users should never call `PenInputSource` directly — use `Modifier.penInput {}`
 from `:stylus-compose` instead.
 
+### Android low-latency drawing — `PenInkSurface`
+
+`stylus-compose` ships an Android-only composable, `PenInkSurface`, on top of
+[Jetpack Ink](https://developer.android.com/develop/ui/views/touch-and-input/stylus-input/about-ink-api)
+(`androidx.ink:ink-authoring-compose`). It renders in-progress strokes through Ink's
+front-buffered `SurfaceControl` for sub-frame latency, and persists finished strokes via
+`CanvasStrokeRenderer`. Sources live in `stylus-compose/src/androidMain/.../PenInkSurface.kt`
+and `PenInkState.kt`.
+
+Public API (Android only):
+
+```kotlin
+@Composable
+fun PenInkSurface(
+    modifier: Modifier = Modifier,
+    state: PenInkState = rememberPenInkState(),
+    brush: PenBrush = PenBrush.Default,
+    onStrokesFinished: (List<PenStroke>) -> Unit = {},
+    onPenEvent: (PenEvent) -> Unit = {},
+    content: @Composable BoxScope.() -> Unit = {},
+)
+
+class PenBrush {                 // opaque wrapper over androidx.ink.brush.Brush
+    companion object {
+        val Default: PenBrush
+        fun pen(color: Color, size: Float = 5f): PenBrush
+        fun marker(color: Color, size: Float = 10f): PenBrush
+        fun highlighter(color: Color, size: Float = 20f): PenBrush
+    }
+}
+class PenStroke                  // opaque wrapper over androidx.ink.strokes.Stroke
+class PenInkState {              // remembered via rememberPenInkState()
+    val finishedStrokes: List<PenStroke>
+    fun clear()
+    fun undo()
+}
+```
+
+Conventions:
+
+- `PenBrush` / `PenStroke` are deliberately **opaque** — keep `androidx.ink.*` types out of
+  consumer imports so the API stays portable if other platforms grow an equivalent renderer.
+- `Modifier.penInput {}` keeps firing while `PenInkSurface` is active, so consumers can still
+  receive raw `PenEvent`s alongside the Ink-rendered output.
+- Use `PenInkSurface` only when **rendering** strokes; for UX that just observes pen events
+  (cursor, palm rejection, gesture recognition), use `Modifier.penInput {}` over a regular
+  `Canvas`.
+- Ink artifacts (`androidx.ink:ink-authoring-compose`, `ink-brush`, `ink-rendering`,
+  `ink-strokes`) are declared in `gradle/libs.versions.toml` and pulled into
+  `stylus-compose`'s `androidMain` only. They never reach `commonMain`.
+
 ### JNI naming conventions
 
 The JNI bridge files live under `stylus-jni/src/main/cpp/` and are named `JNI_Pen*`

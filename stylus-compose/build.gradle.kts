@@ -47,6 +47,16 @@ kotlin {
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
+            implementation(libs.androidx.ink.authoring.compose)
+            implementation(libs.androidx.ink.brush)
+            implementation(libs.androidx.ink.rendering)
+            implementation(libs.androidx.ink.strokes)
+        }
+        androidInstrumentedTest.dependencies {
+            implementation(libs.androidx.compose.ui.test.junit4.android)
+            implementation(libs.androidx.compose.ui.test.manifest)
+            implementation(libs.androidx.test.ext.junit)
+            implementation(libs.androidx.test.runner)
         }
     }
 }
@@ -56,6 +66,7 @@ android {
     compileSdk = libs.versions.android.compileSdk.get().toInt()
     defaultConfig {
         minSdk = libs.versions.android.minSdk.get().toInt()
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11

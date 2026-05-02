@@ -12,6 +12,7 @@ android-minSdk = "24"
 android-targetSdk = "36"
 androidx-activity-compose = "1.10.0"
 androidx-core-ktx = "1.16.0"
+androidx-ink = "1.1.0-alpha02"
 androidx-lifecycle = "2.9.0"
 
 # Build / publishing
@@ -21,6 +22,9 @@ maven-publish-plugin = "0.36.0"
 kotlinx-browser = "0.4"
 
 # Testing
+androidx-compose-ui-test = "1.7.5"
+androidx-test-ext-junit = "1.2.1"
+androidx-test-runner = "1.6.2"
 junit = "4.13.2"
 
 # Demos
@@ -39,10 +43,18 @@ kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-t
 # AndroidX
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity-compose" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core-ktx" }
+androidx-ink-authoring-compose = { module = "androidx.ink:ink-authoring-compose", version.ref = "androidx-ink" }
+androidx-ink-brush = { module = "androidx.ink:ink-brush", version.ref = "androidx-ink" }
+androidx-ink-rendering = { module = "androidx.ink:ink-rendering", version.ref = "androidx-ink" }
+androidx-ink-strokes = { module = "androidx.ink:ink-strokes", version.ref = "androidx-ink" }
 androidx-lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "androidx-lifecycle" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidx-lifecycle" }
 
 # Testing
+androidx-compose-ui-test-junit4-android = { module = "androidx.compose.ui:ui-test-junit4-android", version.ref = "androidx-compose-ui-test" }
+androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest", version.ref = "androidx-compose-ui-test" }
+androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-ext-junit" }
+androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 # Demos

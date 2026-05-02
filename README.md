@@ -96,6 +96,42 @@ data class PenEvent(
 )
 ```
 
+## Android: low-latency drawing with `PenInkSurface`
+
+On Android, `stylus-compose` ships an additional composable, `PenInkSurface`, backed by
+[Jetpack Ink](https://developer.android.com/develop/ui/views/touch-and-input/stylus-input/about-ink-api).
+It uses a front-buffered `SurfaceControl` and built-in motion prediction to render strokes with sub-frame
+latency — visibly tighter than drawing on a regular Compose `Canvas`.
+
+```kotlin
+import com.mohamedrejeb.stylus.compose.PenBrush
+import com.mohamedrejeb.stylus.compose.PenInkSurface
+import com.mohamedrejeb.stylus.compose.rememberPenInkState
+
+@Composable
+fun Notes() {
+    val state = rememberPenInkState()
+    PenInkSurface(
+        modifier = Modifier.fillMaxSize(),
+        state = state,
+        brush = PenBrush.pen(Color.Black, size = 5f),
+    ) {
+        // Overlays — e.g. an undo/clear toolbar
+        Row(Modifier.align(Alignment.TopEnd).padding(8.dp)) {
+            Button(onClick = { state.undo() }) { Text("Undo") }
+            Button(onClick = { state.clear() }) { Text("Clear") }
+        }
+    }
+}
+```
+
+`PenBrush` exposes three stock brushes — `pen(color, size)`, `marker(color, size)`, and
+`highlighter(color, size)` — plus `PenBrush.Default`.
+
+`PenInkSurface` is currently Android-only. On other targets keep using `Modifier.penInput {}` over your own
+`Canvas`. The surrounding `Modifier.penInput {}` continues to fire alongside Ink, so callbacks like
+`onPenEvent` still receive every hover / move / press / release event.
+
 ## Core API (no Compose)
 
 If you need to attach callbacks outside Compose (e.g. to a `Window`, `View`, `UIView`, or `HTMLElement`):
@@ -125,11 +161,11 @@ Compose users should prefer `Modifier.penInput {}` from `stylus-compose` over ca
 
 ## Modules
 
-| Module           | Purpose                                                                 |
-|------------------|-------------------------------------------------------------------------|
-| `stylus`         | Public KMP API: `PenEvent`, `PenEventCallback`, `PenInputSource`        |
-| `stylus-compose` | Compose Multiplatform integration: `Modifier.penInput {}`               |
-| `stylus-jni`     | JVM-only — builds the native shared library used by the Desktop target |
+| Module           | Purpose                                                                                  |
+|------------------|------------------------------------------------------------------------------------------|
+| `stylus`         | Public KMP API: `PenEvent`, `PenEventCallback`, `PenInputSource`                         |
+| `stylus-compose` | Compose Multiplatform integration: `Modifier.penInput {}`. Android also ships `PenInkSurface` (Jetpack Ink, low-latency). |
+| `stylus-jni`     | JVM-only — builds the native shared library used by the Desktop target                  |
 
 ## Build prerequisites
 
