@@ -14,8 +14,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.changedToDown
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.pointerInput
 import com.mohamedrejeb.stylus.PenEvent
-import com.mohamedrejeb.stylus.PenEventType
 
 /**
  * Low-latency stylus drawing surface.
@@ -59,6 +63,19 @@ expect fun PenInkSurface(
  * except Android. Records pen events into an active stroke, applies
  * Catmull-Rom smoothing and linear prediction during in-progress drawing,
  * and emits a [PenStroke] on each release.
+ *
+ * Stroke capture goes through Compose's `pointerInput` (not the JNI-backed
+ * `Modifier.penInput {}`) so positions are already expressed in the same
+ * pixel space the surrounding `DrawScope` draws into. The outer
+ * `Modifier.penInput {}` keeps firing for [onPenEvent], so consumers that
+ * want raw pen telemetry (e.g. JNI-derived pressure on Desktop) still
+ * receive it.
+ *
+ * Pressure note: on Compose Desktop AWT, `PointerInputChange.pressure` is
+ * always `1f` because AWT does not surface stylus pressure. iOS and Web
+ * report real pressure through Compose's pointer pipeline. Consumers who
+ * need pressure-modulated rendering on Desktop should subscribe to
+ * [onPenEvent] and render their own canvas alongside.
  */
 @Composable
 internal fun ComposePenInkSurface(
@@ -73,28 +90,44 @@ internal fun ComposePenInkSurface(
     var strokeStartMs by remember { mutableStateOf(0L) }
 
     Box(
-        modifier = modifier.penInput { event ->
-            onPenEvent(event)
-            when (event.type) {
-                PenEventType.Press -> {
-                    strokeStartMs = event.timestamp
-                    active.clear()
-                    active.add(event.toStrokePoint(strokeStartMs))
-                }
-                PenEventType.Move -> {
-                    if (active.isNotEmpty()) active.add(event.toStrokePoint(strokeStartMs))
-                }
-                PenEventType.Release -> {
-                    if (active.size >= 2) {
-                        val finished = PenStroke(brush = brush, points = active.toList())
-                        state.appendStrokes(listOf(finished))
-                        onStrokesFinished(listOf(finished))
+        modifier = modifier
+            .penInput { onPenEvent(it) }
+            .pointerInput(brush) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull() ?: continue
+                        when (event.type) {
+                            PointerEventType.Press -> {
+                                if (change.changedToDown()) {
+                                    strokeStartMs = change.uptimeMillis
+                                    active.clear()
+                                    active.add(change.toStrokePoint(strokeStartMs))
+                                }
+                            }
+                            PointerEventType.Move -> {
+                                if (active.isNotEmpty()) {
+                                    active.add(change.toStrokePoint(strokeStartMs))
+                                }
+                            }
+                            PointerEventType.Release -> {
+                                if (change.changedToUp()) {
+                                    if (active.size >= 2) {
+                                        val finished = PenStroke(
+                                            brush = brush,
+                                            points = active.toList(),
+                                        )
+                                        state.appendStrokes(listOf(finished))
+                                        onStrokesFinished(listOf(finished))
+                                    }
+                                    active.clear()
+                                }
+                            }
+                            else -> Unit
+                        }
                     }
-                    active.clear()
                 }
-                PenEventType.Hover -> Unit
-            }
-        },
+            },
     ) {
         Canvas(modifier = Modifier.matchParentSize()) {
             state.finishedStrokes.forEach { stroke ->
@@ -108,12 +141,14 @@ internal fun ComposePenInkSurface(
     }
 }
 
-private fun PenEvent.toStrokePoint(strokeStartMs: Long): PenStrokePoint =
+private fun PointerInputChange.toStrokePoint(strokeStartMs: Long): PenStrokePoint =
     PenStrokePoint(
-        x = x.toFloat(),
-        y = y.toFloat(),
-        pressure = pressure.toFloat(),
-        elapsedMillis = timestamp - strokeStartMs,
+        x = position.x,
+        y = position.y,
+        // pressure is 1f on AWT (Compose Desktop does not surface stylus pressure);
+        // real values arrive on iOS (UITouch.force) and Web (PointerEvent.pressure).
+        pressure = pressure,
+        elapsedMillis = uptimeMillis - strokeStartMs,
     )
 
 // === Catmull-Rom smoothing ===
