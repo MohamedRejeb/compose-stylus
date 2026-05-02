@@ -13,6 +13,12 @@ import androidx.compose.ui.graphics.Color
  *   reported maximum pressure; `0` means no pressure.
  * @property elapsedMillis Milliseconds since the stroke began (i.e. since the
  *   pen pressed down).
+ * @property tiltX Cartesian X component of the pen's tilt vector, in radians.
+ *   Matches the [PenEvent.tiltX] convention — positive values lean to the
+ *   right of the surface. `0` when the platform doesn't report tilt.
+ * @property tiltY Cartesian Y component of the pen's tilt vector, in radians.
+ *   Positive values lean toward the user. `0` when the platform doesn't
+ *   report tilt.
  */
 @Immutable
 data class PenStrokePoint(
@@ -20,6 +26,8 @@ data class PenStrokePoint(
     val y: Float,
     val pressure: Float,
     val elapsedMillis: Long,
+    val tiltX: Float = 0f,
+    val tiltY: Float = 0f,
 )
 
 /**

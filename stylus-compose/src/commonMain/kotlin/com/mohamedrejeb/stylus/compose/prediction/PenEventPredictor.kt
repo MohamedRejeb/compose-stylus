@@ -65,6 +65,8 @@ internal class PenEventPredictor(
     private var lastTimestamp: Long = -1L
     private var lastX: Float = 0f
     private var lastY: Float = 0f
+    private var lastTiltX: Float = 0f
+    private var lastTiltY: Float = 0f
     private var reportRateMs: Float = 0f
 
     fun reset() {
@@ -75,6 +77,8 @@ internal class PenEventPredictor(
         lastTimestamp = -1L
         lastX = 0f
         lastY = 0f
+        lastTiltX = 0f
+        lastTiltY = 0f
         reportRateMs = 0f
     }
 
@@ -116,6 +120,8 @@ internal class PenEventPredictor(
         lastTimestamp = ts
         lastX = point.x
         lastY = point.y
+        lastTiltX = point.tiltX
+        lastTiltY = point.tiltY
     }
 
     /**
@@ -172,6 +178,11 @@ internal class PenEventPredictor(
             y = py,
             pressure = pp.coerceIn(0f, 1f),
             elapsedMillis = lastTimestamp + predictAheadMs,
+            // Carry tilt forward unchanged — pen orientation rarely changes
+            // within a 16 ms predict window, and a one-axis Kalman per tilt
+            // component would be overfitting for the visual benefit.
+            tiltX = lastTiltX,
+            tiltY = lastTiltY,
         )
     }
 

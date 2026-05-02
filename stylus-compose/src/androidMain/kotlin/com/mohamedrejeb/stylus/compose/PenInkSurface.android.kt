@@ -20,6 +20,10 @@ import androidx.ink.strokes.MutableStrokeInputBatch
 import androidx.ink.strokes.Stroke
 import androidx.ink.strokes.StrokeInput
 import com.mohamedrejeb.stylus.PenEvent
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 @Composable
 actual fun PenInkSurface(
@@ -81,12 +85,29 @@ private fun Stroke.toPenStroke(brush: PenBrush): PenStroke {
     for (i in 0 until n) {
         val input: StrokeInput = inputs[i]
         val pressure = if (input.hasPressure) input.pressure else 1f
+        // Ink stores tilt in polar form (magnitude + azimuth). Convert to
+        // the same Cartesian (tiltX, tiltY) shape PenEvent / PenStrokePoint
+        // use so a stroke captured here re-renders identically on the
+        // shared Compose pipeline (desktop / iOS / web).
+        val tiltX: Float
+        val tiltY: Float
+        if (input.hasTilt && input.hasOrientation) {
+            val mag = input.tiltRadians
+            val orient = input.orientationRadians
+            tiltX = mag * cos(orient)
+            tiltY = mag * sin(orient)
+        } else {
+            tiltX = 0f
+            tiltY = 0f
+        }
         points.add(
             PenStrokePoint(
                 x = input.x,
                 y = input.y,
                 pressure = pressure,
                 elapsedMillis = input.elapsedTimeMillis,
+                tiltX = tiltX,
+                tiltY = tiltY,
             ),
         )
     }
@@ -102,13 +123,30 @@ private fun PenStroke.toInkStroke(inkBrush: Brush): Stroke? {
     if (points.size < 2) return null
     val batch = MutableStrokeInputBatch()
     points.forEach { p ->
-        batch.add(
-            type = InputToolType.STYLUS,
-            x = p.x,
-            y = p.y,
-            elapsedTimeMillis = p.elapsedMillis,
-            pressure = p.pressure,
-        )
+        // Cartesian tilt → Ink polar (tiltRadians, orientationRadians).
+        // Pass NO_TILT / NO_ORIENTATION when the source didn't report tilt
+        // so Ink's brushes that branch on `hasTilt` keep their existing
+        // behavior instead of treating "vertical pen" as a real reading.
+        val tiltMag = sqrt(p.tiltX * p.tiltX + p.tiltY * p.tiltY)
+        if (tiltMag > 0f) {
+            batch.add(
+                type = InputToolType.STYLUS,
+                x = p.x,
+                y = p.y,
+                elapsedTimeMillis = p.elapsedMillis,
+                pressure = p.pressure,
+                tiltRadians = tiltMag,
+                orientationRadians = atan2(p.tiltY, p.tiltX),
+            )
+        } else {
+            batch.add(
+                type = InputToolType.STYLUS,
+                x = p.x,
+                y = p.y,
+                elapsedTimeMillis = p.elapsedMillis,
+                pressure = p.pressure,
+            )
+        }
     }
     return Stroke(brush = inkBrush, inputs = batch)
 }
