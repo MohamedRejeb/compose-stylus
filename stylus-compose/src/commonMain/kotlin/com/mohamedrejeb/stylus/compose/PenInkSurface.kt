@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import com.mohamedrejeb.stylus.PenEvent
 import com.mohamedrejeb.stylus.PenEventType
+import com.mohamedrejeb.stylus.compose.prediction.PenEventPredictor
 
 /**
  * Low-latency stylus drawing surface.
@@ -26,9 +27,10 @@ import com.mohamedrejeb.stylus.PenEventType
  * built-in motion prediction.
  *
  * On **Desktop / iOS / Web** the surface uses a pure-Compose pipeline with
- * Catmull-Rom smoothing and linear motion prediction — visibly tighter than a
- * naive `Canvas` per-event renderer, but without the OS-level compositor
- * bypass that Android has.
+ * Catmull-Rom smoothing and a Kalman-filter motion predictor (a faithful
+ * port of `androidx.input.motionprediction` — same algorithm and tuning
+ * constants as the platform predictor Jetpack Ink uses on Android, just
+ * not the OS-level front-buffer compositor bypass).
  *
  * `Modifier.penInput {}` continues to fire alongside, so consumers that need
  * raw pen telemetry (pressure, tilt, hover) can still subscribe via
@@ -57,8 +59,9 @@ expect fun PenInkSurface(
 /**
  * Shared pure-Compose implementation of [PenInkSurface] used by every actual
  * except Android. Records pen events into an active stroke, applies
- * Catmull-Rom smoothing and linear prediction during in-progress drawing,
- * and emits a [PenStroke] on each release.
+ * Catmull-Rom smoothing and Kalman-filter motion prediction (via
+ * [PenEventPredictor]) during in-progress drawing, and emits a [PenStroke]
+ * on each release.
  *
  * Stroke capture flows through `Modifier.penInput {}` so consumers get the
  * same `PenEvent` stream both for app logic ([onPenEvent]) and for the
@@ -75,6 +78,7 @@ internal fun ComposePenInkSurface(
     content: @Composable BoxScope.() -> Unit,
 ) {
     val active = remember { mutableStateListOf<PenStrokePoint>() }
+    val predictor = remember { PenEventPredictor() }
     var strokeStartMs by remember { mutableStateOf(0L) }
 
     Box(
@@ -83,11 +87,18 @@ internal fun ComposePenInkSurface(
             when (event.type) {
                 PenEventType.Press -> {
                     strokeStartMs = event.timestamp
+                    predictor.reset()
                     active.clear()
-                    active.add(event.toStrokePoint(strokeStartMs))
+                    val point = event.toStrokePoint(strokeStartMs)
+                    predictor.record(point)
+                    active.add(point)
                 }
                 PenEventType.Move -> {
-                    if (active.isNotEmpty()) active.add(event.toStrokePoint(strokeStartMs))
+                    if (active.isNotEmpty()) {
+                        val point = event.toStrokePoint(strokeStartMs)
+                        predictor.record(point)
+                        active.add(point)
+                    }
                 }
                 PenEventType.Release -> {
                     if (active.size >= 2) {
@@ -95,6 +106,7 @@ internal fun ComposePenInkSurface(
                         state.appendStrokes(listOf(finished))
                         onStrokesFinished(listOf(finished))
                     }
+                    predictor.reset()
                     active.clear()
                 }
                 PenEventType.Hover -> Unit
@@ -102,15 +114,44 @@ internal fun ComposePenInkSurface(
         },
     ) {
         Canvas(modifier = Modifier.matchParentSize()) {
+            // Finished strokes — use cached smoothed points (computed once
+            // per stroke on first access, then reused every frame).
             state.finishedStrokes.forEach { stroke ->
-                drawPenStroke(stroke.points, stroke.brush)
+                drawSmoothedStroke(stroke.smoothedPoints, stroke.brush)
             }
-            if (active.isNotEmpty()) {
-                drawPenStroke(predictNextPoint(active), brush)
+            // Active stroke — index-copy to a stable list before iterating.
+            // `active` is a SnapshotStateList; iterating it directly via
+            // `active + predicted` (Kotlin `Collection.plus` → `addAll` →
+            // `toArray` → fail-fast iterator) would throw
+            // ConcurrentModificationException if any other thread mutates
+            // the list mid-iteration.
+            val snapshot = active.snapshotPoints()
+            if (snapshot.isNotEmpty()) {
+                val predicted = predictor.predict()
+                val toDraw = if (predicted != null) snapshot + predicted else snapshot
+                drawSmoothedStroke(catmullRomSmooth(toDraw), brush)
             }
         }
         content()
     }
+}
+
+/**
+ * Copy [this] to a stable [List] via index access. Avoids `Iterator`-based
+ * traversal so a concurrent write can't trigger fail-fast
+ * `ConcurrentModificationException` mid-iteration. The size is sampled once
+ * up-front; if a write extends or shrinks the list while we're copying we
+ * simply observe a slightly stale snapshot rather than crash — preferable
+ * to losing the whole frame.
+ */
+private fun List<PenStrokePoint>.snapshotPoints(): List<PenStrokePoint> {
+    val n = size
+    if (n == 0) return emptyList()
+    val out = ArrayList<PenStrokePoint>(n)
+    for (i in 0 until n) {
+        out.add(getOrNull(i) ?: break)
+    }
+    return out
 }
 
 private fun PenEvent.toStrokePoint(strokeStartMs: Long): PenStrokePoint =
@@ -176,29 +217,18 @@ private fun catmullRomPoint(
     return PenStrokePoint(x, y, pressure, elapsed)
 }
 
-// === Prediction (linear extrapolation, ~1 frame ahead) ===
-
-internal fun predictNextPoint(points: List<PenStrokePoint>): List<PenStrokePoint> {
-    if (points.size < 2) return points.toList()
-    val last = points.last()
-    val prev = points[points.size - 2]
-    val deltaT = last.elapsedMillis - prev.elapsedMillis
-    if (deltaT <= 0) return points.toList()
-    val ratio = PREDICT_FRAME_MS.toFloat() / deltaT
-    val predicted = PenStrokePoint(
-        x = last.x + (last.x - prev.x) * ratio,
-        y = last.y + (last.y - prev.y) * ratio,
-        pressure = last.pressure,
-        elapsedMillis = last.elapsedMillis + PREDICT_FRAME_MS,
-    )
-    return points.toList() + predicted
-}
-
 // === Rendering ===
 
-private fun DrawScope.drawPenStroke(points: List<PenStrokePoint>, brush: PenBrush) {
-    if (points.size < 2) return
-    val smoothed = catmullRomSmooth(points)
+/**
+ * Render an already-smoothed point list. The Catmull-Rom pass is intentionally
+ * left to the caller: finished strokes hand in their cached `smoothedPoints`
+ * (computed once and stored on the immutable [PenStroke]), while the active
+ * stroke runs `catmullRomSmooth` per frame because it grows each event.
+ * Re-running smoothing for every finished stroke per frame turned out to be
+ * the dominant cost on dense canvases.
+ */
+private fun DrawScope.drawSmoothedStroke(smoothed: List<PenStrokePoint>, brush: PenBrush) {
+    if (smoothed.size < 2) return
     val color = colorFor(brush)
     for (i in 1 until smoothed.size) {
         val a = smoothed[i - 1]
@@ -226,7 +256,6 @@ private fun colorFor(brush: PenBrush): Color = when (brush.family) {
 }
 
 private const val SMOOTHING_SUBDIVISIONS: Int = 8
-private const val PREDICT_FRAME_MS: Long = 16L
 private const val PEN_MIN_WIDTH_FACTOR: Float = 0.3f
 private const val PEN_PRESSURE_FACTOR: Float = 1.4f
 private const val HIGHLIGHTER_ALPHA: Float = 0.3f

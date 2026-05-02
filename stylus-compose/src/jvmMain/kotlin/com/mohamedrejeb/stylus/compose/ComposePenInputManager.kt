@@ -9,6 +9,7 @@ import com.mohamedrejeb.stylus.PenEventType
 import com.mohamedrejeb.stylus.PenInputSource
 import java.awt.Window
 import java.util.concurrent.ConcurrentHashMap
+import javax.swing.SwingUtilities
 
 /**
  * JVM-only bridge between Compose modifier nodes and the native [PenInputSource].
@@ -103,6 +104,16 @@ internal class ComposePenInputManager private constructor() {
      * tracks per-component "currently pressed" state so a drag that starts
      * inside the bounds keeps reporting until release, even if the cursor
      * leaves the component's bounds mid-stroke.
+     *
+     * **Threading:** native pen events fire on whatever thread the JNI bridge
+     * dispatches from (Cocoa main thread / X11 dispatch thread / RTS thread —
+     * `AttachCurrentThread` in the JNI bridge attaches whichever it is). The
+     * translation/bounds/pressed bookkeeping runs synchronously on that thread
+     * so the per-event state machine stays consistent, but the user's
+     * [delegate] callback is marshaled onto the EDT before invocation —
+     * Compose Desktop draws on the EDT and any state writes from the user's
+     * callback (e.g. mutating a `SnapshotStateList`) must happen there to
+     * avoid `ConcurrentModificationException` mid-draw.
      */
     private inner class ComponentScopedCallback(
         private val key: Any,
@@ -114,29 +125,37 @@ internal class ComposePenInputManager private constructor() {
             when (event.type) {
                 PenEventType.Hover -> {
                     val translated = translateToComponent(key, event) ?: return
-                    if (containsTranslated(key, translated)) delegate.onEvent(translated)
+                    if (containsTranslated(key, translated)) deliverOnEdt(translated)
                 }
                 PenEventType.Move -> {
                     // Filter spurious "button down but callback wasn't the click target" events.
                     if (event.button != PenButton.None && !pressed) return
                     val translated = translateToComponent(key, event) ?: return
                     if (pressed || containsTranslated(key, translated)) {
-                        delegate.onEvent(translated)
+                        deliverOnEdt(translated)
                     }
                 }
                 PenEventType.Press -> {
                     val translated = translateToComponent(key, event) ?: return
                     if (containsTranslated(key, translated)) {
                         pressed = true
-                        delegate.onEvent(translated)
+                        deliverOnEdt(translated)
                     }
                 }
                 PenEventType.Release -> {
                     if (!pressed) return
                     pressed = false
                     val translated = translateToComponent(key, event) ?: return
-                    delegate.onEvent(translated)
+                    deliverOnEdt(translated)
                 }
+            }
+        }
+
+        private fun deliverOnEdt(event: PenEvent) {
+            if (SwingUtilities.isEventDispatchThread()) {
+                delegate.onEvent(event)
+            } else {
+                SwingUtilities.invokeLater { delegate.onEvent(event) }
             }
         }
     }
@@ -155,11 +174,21 @@ internal class ComposePenInputManager private constructor() {
      * dispatched from the native side. Coordinates should be in the same
      * space the native bridge produces: window-content-local **physical
      * pixels**, top-left origin.
+     *
+     * Runs the callback chain on the EDT (synchronously) so the user
+     * delegate has finished by the time this call returns — production
+     * code marshals delegate calls to the EDT via `invokeLater`, and tests
+     * that assert immediately after `dispatchSynthetic` need that delivery
+     * to be observable, not queued.
      */
     internal fun dispatchSynthetic(key: Any, event: PenEvent) {
         val state = states[key] ?: return
         val callback = state.callback ?: return
-        callback.onEvent(event)
+        if (SwingUtilities.isEventDispatchThread()) {
+            callback.onEvent(event)
+        } else {
+            SwingUtilities.invokeAndWait { callback.onEvent(event) }
+        }
     }
 
     /** Drop all per-key state. Used by tests to isolate cases. */

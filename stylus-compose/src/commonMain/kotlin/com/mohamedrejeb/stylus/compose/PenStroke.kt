@@ -36,6 +36,20 @@ class PenStroke internal constructor(
 ) {
     /** Axis-aligned bounding box of all sampled points. Computed lazily. */
     val bounds: Rect by lazy { computeBounds(points) }
+
+    /**
+     * Catmull-Rom-smoothed point trail used by the non-Android Compose
+     * renderer. Computed once on first access and reused for the lifetime
+     * of the stroke — without this cache, every Compose frame re-ran the
+     * full smoothing pipeline (`O(N · subdivisions)`) for every finished
+     * stroke, which compounded fast on staccato drawing where dozens of
+     * strokes accumulate quickly.
+     *
+     * Unused on Android, where finished strokes go through Ink's
+     * `CanvasStrokeRenderer` instead. Lazy init means the smoothing work
+     * never runs on Android.
+     */
+    internal val smoothedPoints: List<PenStrokePoint> by lazy { catmullRomSmooth(points) }
 }
 
 private fun computeBounds(points: List<PenStrokePoint>): Rect {
