@@ -130,6 +130,61 @@ jobs:
             stylus-compose/build/reports/tests/jvmTest/
           retention-days: 7
 
+  # ─── Snapshot publish to Maven Central ───────────────────────────────────
+  # On push to main, publish the current `-SNAPSHOT` version to Sonatype's
+  # snapshots repo. Mirrors the release.yml publish job: runs on macOS so
+  # iOS framework publications can be built, and reuses each platform's
+  # native lib uploaded by `build-native`.
+  publish-snapshot:
+    name: publish snapshot to Maven Central
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build-native, package-jar]
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Download all native artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: stylus-jni/build/native
+          pattern: native-*
+
+      - name: Reorganize native artifacts
+        run: |
+          set -eux
+          cd stylus-jni/build/native
+          for d in native-*; do
+            classifier="${d#native-}"
+            mkdir -p "$classifier"
+            mv "$d"/* "$classifier/"
+            rmdir "$d"
+          done
+          find . -type f
+
+      - name: Publish snapshot to Maven Central
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.OSSRH_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.OSSRH_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.OSSRH_GPG_SECRET_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.OSSRH_GPG_SECRET_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.OSSRH_GPG_SECRET_KEY_PASSWORD }}
+        run: |
+          ./gradlew \
+            -PskipNativeBuild \
+            :stylus:publishAllPublicationsToMavenCentralRepository \
+            :stylus-compose:publishAllPublicationsToMavenCentralRepository \
+            --no-daemon --stacktrace
+
   # ─── Other targets ────────────────────────────────────────────────────────
   # Android, iOS, wasmJs don't depend on the native libs (they use their own
   # platform input APIs / Compose pointer events). Run these in parallel with

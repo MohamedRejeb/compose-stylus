@@ -212,16 +212,20 @@ The workflow:
 
 ### Required GitHub secrets
 
+Names match the convention used across `MohamedRejeb/*` repos (e.g. Calf),
+so the same secrets work for every project.
+
 | Secret | What it is |
 |---|---|
-| `MAVEN_CENTRAL_USERNAME` | Sonatype Central Portal user token name |
-| `MAVEN_CENTRAL_PASSWORD` | Sonatype Central Portal user token password |
-| `SIGNING_KEY` | GPG private key (ASCII-armored, full block including BEGIN/END lines) |
-| `SIGNING_KEY_ID` | Last 8 chars of the GPG key fingerprint |
-| `SIGNING_PASSWORD` | GPG passphrase |
+| `OSSRH_USERNAME` | Sonatype Central Portal user token name |
+| `OSSRH_PASSWORD` | Sonatype Central Portal user token password |
+| `OSSRH_GPG_SECRET_KEY` | GPG private key (ASCII-armored, full block including BEGIN/END lines) |
+| `OSSRH_GPG_SECRET_KEY_ID` | Last 8 chars of the GPG key fingerprint |
+| `OSSRH_GPG_SECRET_KEY_PASSWORD` | GPG passphrase |
 
-The release job exposes these to Gradle as `ORG_GRADLE_PROJECT_*` env vars,
-which the vanniktech plugin picks up.
+Both the release (`release.yml`) and snapshot (`build.yml` on push to `main`)
+jobs expose these to Gradle as `ORG_GRADLE_PROJECT_*` env vars, which the
+vanniktech plugin picks up.
 
 ### `-PskipNativeBuild`
 
