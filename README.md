@@ -96,12 +96,18 @@ data class PenEvent(
 )
 ```
 
-## Android: low-latency drawing with `PenInkSurface`
+## Drawing strokes with `PenInkSurface`
 
-On Android, `stylus-compose` ships an additional composable, `PenInkSurface`, backed by
-[Jetpack Ink](https://developer.android.com/develop/ui/views/touch-and-input/stylus-input/about-ink-api).
-It uses a front-buffered `SurfaceControl` and built-in motion prediction to render strokes with sub-frame
-latency — visibly tighter than drawing on a regular Compose `Canvas`.
+`stylus-compose` ships a `PenInkSurface` composable that handles in-progress
+stylus rendering and persists finished strokes for you. It works on every
+target, with a different engine per platform:
+
+| Target           | Engine                                                                                              |
+|------------------|-----------------------------------------------------------------------------------------------------|
+| Android          | [Jetpack Ink](https://developer.android.com/develop/ui/views/touch-and-input/stylus-input/about-ink-api) — front-buffered `SurfaceControl`, sub-frame latency, native motion prediction |
+| Desktop / iOS / Web | Pure-Compose pipeline with Catmull-Rom smoothing and linear motion prediction — visibly tighter than a naive `Canvas` per-event renderer, but without the OS-level compositor bypass that Android has |
+
+Same API across all targets:
 
 ```kotlin
 import com.mohamedrejeb.stylus.compose.PenBrush
@@ -128,9 +134,14 @@ fun Notes() {
 `PenBrush` exposes three stock brushes — `pen(color, size)`, `marker(color, size)`, and
 `highlighter(color, size)` — plus `PenBrush.Default`.
 
-`PenInkSurface` is currently Android-only. On other targets keep using `Modifier.penInput {}` over your own
-`Canvas`. The surrounding `Modifier.penInput {}` continues to fire alongside Ink, so callbacks like
-`onPenEvent` still receive every hover / move / press / release event.
+The surrounding `Modifier.penInput {}` continues to fire alongside the
+rendering engine, so subscribing to `onPenEvent` still gives you every
+hover / move / press / release event with full pressure/tilt data.
+
+Finished strokes are exposed as `PenInkState.finishedStrokes: List<PenStroke>`.
+Each `PenStroke` carries its `brush` and a list of `PenStrokePoint`s, so they
+are platform-neutral data — a stroke captured on Desktop renders identically
+when handed back to an Android `PenInkSurface` (and vice versa).
 
 ## Core API (no Compose)
 
@@ -164,7 +175,7 @@ Compose users should prefer `Modifier.penInput {}` from `stylus-compose` over ca
 | Module           | Purpose                                                                                  |
 |------------------|------------------------------------------------------------------------------------------|
 | `stylus`         | Public KMP API: `PenEvent`, `PenEventCallback`, `PenInputSource`                         |
-| `stylus-compose` | Compose Multiplatform integration: `Modifier.penInput {}`. Android also ships `PenInkSurface` (Jetpack Ink, low-latency). |
+| `stylus-compose` | Compose Multiplatform integration: `Modifier.penInput {}` and `PenInkSurface` (Jetpack Ink on Android, pure-Compose smoothing + prediction elsewhere). |
 | `stylus-jni`     | JVM-only — builds the native shared library used by the Desktop target                  |
 
 ## Build prerequisites

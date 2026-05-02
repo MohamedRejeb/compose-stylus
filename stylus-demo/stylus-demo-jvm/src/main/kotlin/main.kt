@@ -1,10 +1,17 @@
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.Button
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
+import androidx.compose.material.Tab
+import androidx.compose.material.TabRow
+import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
@@ -50,8 +57,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import androidx.compose.ui.awt.ComposeWindow
 import com.mohamedrejeb.stylus.PenButton
+import com.mohamedrejeb.stylus.compose.PenInkSurface
 import com.mohamedrejeb.stylus.compose.ProvidePenInputWindow
 import com.mohamedrejeb.stylus.compose.penInput
+import com.mohamedrejeb.stylus.compose.rememberPenInkState
 import stylus.calcDistance
 import stylus.compose.demo.StylusBrush
 import stylus.compose.demo.StylusPoint
@@ -84,11 +93,58 @@ fun main() {
         ) {
             val composeWindow = window
             ProvidePenInputWindow {
-                DrawApp(
+                DemoSwitcher(
                     windowState = state,
                     composeWindow = composeWindow,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun DemoSwitcher(
+    windowState: WindowState,
+    composeWindow: ComposeWindow,
+) {
+    var selectedTab by remember { mutableIntStateOf(0) }
+    Column(Modifier.fillMaxSize()) {
+        TabRow(selectedTabIndex = selectedTab) {
+            Tab(
+                selected = selectedTab == 0,
+                onClick = { selectedTab = 0 },
+                text = { Text("Custom (legacy)") },
+            )
+            Tab(
+                selected = selectedTab == 1,
+                onClick = { selectedTab = 1 },
+                text = { Text("PenInkSurface") },
+            )
+        }
+        Box(Modifier.fillMaxSize()) {
+            when (selectedTab) {
+                0 -> DrawApp(windowState, composeWindow)
+                else -> PenInkSurfaceDemo()
+            }
+        }
+    }
+}
+
+@Composable
+private fun PenInkSurfaceDemo() {
+    val state = rememberPenInkState()
+    PenInkSurface(
+        modifier = Modifier.fillMaxSize(),
+        state = state,
+    ) {
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(8.dp),
+        ) {
+            Button(onClick = { state.undo() }) { Text("Undo") }
+            Spacer(Modifier.width(8.dp))
+            Button(onClick = { state.clear() }) { Text("Clear") }
         }
     }
 }

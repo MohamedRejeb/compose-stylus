@@ -92,20 +92,36 @@ expect class PenInputSource {
 Compose users should never call `PenInputSource` directly — use `Modifier.penInput {}`
 from `:stylus-compose` instead.
 
-### Android low-latency drawing — `PenInkSurface`
+### Low-latency drawing — `PenInkSurface`
 
-`stylus-compose` ships an Android-only composable, `PenInkSurface`, on top of
-[Jetpack Ink](https://developer.android.com/develop/ui/views/touch-and-input/stylus-input/about-ink-api)
-(`androidx.ink:ink-authoring-compose`). It renders in-progress strokes through Ink's
-front-buffered `SurfaceControl` for sub-frame latency, and persists finished strokes via
-`CanvasStrokeRenderer`. Sources live in `stylus-compose/src/androidMain/.../PenInkSurface.kt`
-and `PenInkState.kt`.
+`stylus-compose` ships a `PenInkSurface` composable that handles in-progress
+stylus rendering and persists finished strokes. The public API lives in
+`commonMain`; `PenInkSurface` itself is `expect`/`actual` so each target uses
+the best available engine.
 
-Public API (Android only):
+| Target           | Engine                                                                                                                |
+|------------------|-----------------------------------------------------------------------------------------------------------------------|
+| Android          | [Jetpack Ink](https://developer.android.com/develop/ui/views/touch-and-input/stylus-input/about-ink-api) — front-buffered `SurfaceControl`, native motion prediction. Finished strokes drawn via `CanvasStrokeRenderer`. |
+| JVM / iOS / Web  | Shared `ComposePenInkSurface` — pure-Compose pipeline with Catmull-Rom smoothing (8 subdivisions / segment) and linear motion prediction (~16 ms ahead). |
+
+File layout:
+
+```
+stylus-compose/src/
+├── commonMain/.../PenInkSurface.kt        expect fun + ComposePenInkSurface (shared impl)
+├── commonMain/.../PenStroke.kt            PenStroke, PenStrokePoint, PenBrush, PenBrushFamily
+├── commonMain/.../PenInkState.kt          PenInkState, rememberPenInkState
+├── androidMain/.../PenInkSurface.android.kt   actual — Ink + brush/stroke conversions
+├── jvmMain/.../PenInkSurface.jvm.kt        actual — delegates to ComposePenInkSurface
+├── iosMain/.../PenInkSurface.ios.kt        actual — delegates to ComposePenInkSurface
+└── wasmJsMain/.../PenInkSurface.wasmJs.kt  actual — delegates to ComposePenInkSurface
+```
+
+Public API (common):
 
 ```kotlin
 @Composable
-fun PenInkSurface(
+expect fun PenInkSurface(
     modifier: Modifier = Modifier,
     state: PenInkState = rememberPenInkState(),
     brush: PenBrush = PenBrush.Default,
@@ -114,7 +130,8 @@ fun PenInkSurface(
     content: @Composable BoxScope.() -> Unit = {},
 )
 
-class PenBrush {                 // opaque wrapper over androidx.ink.brush.Brush
+class PenBrush {                              // concrete, common
+    val color: Color; val size: Float; val family: PenBrushFamily
     companion object {
         val Default: PenBrush
         fun pen(color: Color, size: Float = 5f): PenBrush
@@ -122,8 +139,16 @@ class PenBrush {                 // opaque wrapper over androidx.ink.brush.Brush
         fun highlighter(color: Color, size: Float = 20f): PenBrush
     }
 }
-class PenStroke                  // opaque wrapper over androidx.ink.strokes.Stroke
-class PenInkState {              // remembered via rememberPenInkState()
+enum class PenBrushFamily { Pen, Marker, Highlighter }
+
+data class PenStrokePoint(val x: Float, val y: Float, val pressure: Float, val elapsedMillis: Long)
+class PenStroke {                             // platform-neutral
+    val brush: PenBrush
+    val points: List<PenStrokePoint>
+    val bounds: Rect                          // lazy
+}
+
+class PenInkState {                           // remembered via rememberPenInkState()
     val finishedStrokes: List<PenStroke>
     fun clear()
     fun undo()
@@ -132,16 +157,19 @@ class PenInkState {              // remembered via rememberPenInkState()
 
 Conventions:
 
-- `PenBrush` / `PenStroke` are deliberately **opaque** — keep `androidx.ink.*` types out of
-  consumer imports so the API stays portable if other platforms grow an equivalent renderer.
-- `Modifier.penInput {}` keeps firing while `PenInkSurface` is active, so consumers can still
-  receive raw `PenEvent`s alongside the Ink-rendered output.
-- Use `PenInkSurface` only when **rendering** strokes; for UX that just observes pen events
-  (cursor, palm rejection, gesture recognition), use `Modifier.penInput {}` over a regular
-  `Canvas`.
-- Ink artifacts (`androidx.ink:ink-authoring-compose`, `ink-brush`, `ink-rendering`,
-  `ink-strokes`) are declared in `gradle/libs.versions.toml` and pulled into
-  `stylus-compose`'s `androidMain` only. They never reach `commonMain`.
+- **`PenStroke` is portable data**, not an opaque wrapper. A stroke captured on
+  any platform can be re-rendered on any other. The Android actual round-trips
+  through `MutableStrokeInputBatch` to feed `CanvasStrokeRenderer`.
+- `Modifier.penInput {}` keeps firing while `PenInkSurface` is active, so
+  consumers can still receive raw `PenEvent`s alongside the rendered output.
+- Use `PenInkSurface` only when **rendering** strokes; for UX that just observes
+  pen events (cursor, palm rejection, gesture recognition), use `Modifier.penInput {}`
+  over a regular `Canvas`.
+- Ink artifacts (`androidx.ink:ink-authoring-compose`, `ink-brush`,
+  `ink-rendering`, `ink-strokes`) are declared in `gradle/libs.versions.toml`
+  and pulled into `stylus-compose`'s `androidMain` only. They never reach
+  `commonMain` — the cross-platform `actual`s use Compose's own `Canvas` and
+  pointer pipeline.
 
 ### JNI naming conventions
 
