@@ -3,6 +3,8 @@ package com.mohamedrejeb.stylus.compose
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import com.mohamedrejeb.stylus.PenTool
 
 /**
  * A single sampled point along a [PenStroke].
@@ -41,6 +43,7 @@ data class PenStrokePoint(
 class PenStroke internal constructor(
     val brush: PenBrush,
     val points: List<PenStrokePoint>,
+    val tool: PenTool = PenTool.Pen,
 ) {
     /** Axis-aligned bounding box of all sampled points. Computed lazily. */
     val bounds: Rect by lazy { computeBounds(points) }
@@ -58,6 +61,35 @@ class PenStroke internal constructor(
      * never runs on Android.
      */
     internal val smoothedPoints: List<PenStrokePoint> by lazy { catmullRomSmooth(points) }
+
+    /**
+     * Pre-computed indexed triangle mesh for the Skia `drawVertices`
+     * renderer — feathered topology with alpha-gradient outer edges so
+     * the GPU rasterizer produces anti-aliased lateral edges that
+     * `drawVertices` would otherwise leave stair-stepped.
+     *
+     * Cached on the stroke so finished strokes redraw with zero
+     * per-frame allocation: the buffers go straight to `drawVertices`,
+     * and the GPU upload is the only work left.
+     *
+     * Unused on Android (Ink renders finished strokes), and lazy init
+     * means the math never runs there.
+     */
+    internal val tessellatedMesh: RibbonMesh by lazy {
+        tessellateRibbon(smoothedPoints, brush)
+    }
+
+    /**
+     * Pre-computed outline `Path` for the perfect-freehand-style renderer
+     * (see [tessellateSmoothPath]). Kept lazy and parallel to
+     * [tessellatedMesh] so the surface can dispatch on engine without
+     * either pipeline running on strokes that never need it.
+     *
+     * Skips Catmull-Rom: the freehand pipeline has its own input streamline
+     * smoother that operates on the raw point list, and double-smoothing
+     * over-rounds short flicks. Unused on Android.
+     */
+    internal val smoothPath: Path by lazy { tessellateSmoothPath(points, brush) }
 }
 
 private fun computeBounds(points: List<PenStrokePoint>): Rect {

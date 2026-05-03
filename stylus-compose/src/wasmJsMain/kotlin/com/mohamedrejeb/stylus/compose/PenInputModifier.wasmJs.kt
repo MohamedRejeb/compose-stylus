@@ -29,8 +29,20 @@ internal actual fun platformPenInputModifier(
     // half its true position and the renderer draws a phantom stroke at
     // half the canvas's offset.
     val density = LocalDensity.current.density
-    val subscriber = remember { CoalescedSubscriber(onEvent) }
+    // The subscriber survives across recompositions, but `onEvent` is
+    // re-allocated on every composition — the lambda from
+    // `Modifier.penInput { … }` captures the latest brush / state inside
+    // `PenInkSurface`, and stamping a finished stroke uses whichever
+    // `onEvent` we last forwarded. If we left the subscriber holding the
+    // lambda from the very first composition (the original
+    // `remember { CoalescedSubscriber(onEvent) }` pattern), changing the
+    // brush would only affect in-flight rendering — every finished
+    // stroke would still be captured with the brush that was active
+    // when the surface first composed. Push the latest lambda through
+    // each frame, same way we already update `density`.
+    val subscriber = remember { CoalescedSubscriber() }
     subscriber.density = density
+    subscriber.onEvent = onEvent
 
     DisposableEffect(Unit) {
         WebPointerSidecar.ensureAttached()
@@ -54,9 +66,11 @@ internal actual fun platformPenInputModifier(
         )
 }
 
-private class CoalescedSubscriber(
-    private val onEvent: (PenEvent) -> Unit,
-) : WebPointerSidecar.Subscriber {
+private class CoalescedSubscriber : WebPointerSidecar.Subscriber {
+    // Re-assigned by the modifier every composition so this subscriber
+    // always forwards events through the latest closure. See the comment
+    // at the assignment site for why the initial-only capture was wrong.
+    var onEvent: (PenEvent) -> Unit = {}
     var bounds: Rect = Rect.Zero
     var density: Float = 1f
 

@@ -41,9 +41,35 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.kotlin.test)
         }
+        // Intermediate source set shared by all Skia/Skiko-backed targets
+        // (Desktop JVM, iOS, Web wasmJs). Hosts the pure-Compose ink renderer
+        // and the org.jetbrains.skia drawVertices tessellation pipeline that
+        // is only meaningful on these targets — Android uses Jetpack Ink and
+        // does not need any of this code, so keeping it out of commonMain
+        // keeps the Android compilation lean and free of Skia symbols.
+        val skikoMain by creating {
+            dependsOn(commonMain.get())
+        }
+        jvmMain {
+            dependsOn(skikoMain)
+        }
+        iosMain {
+            dependsOn(skikoMain)
+        }
+        wasmJsMain {
+            dependsOn(skikoMain)
+        }
         jvmMain.dependencies {
             implementation(compose.desktop.common)
             implementation(libs.kotlinx.coroutines.swing)
+        }
+        jvmTest.dependencies {
+            // Pulls the skiko native runtime onto the test classpath so
+            // tests that touch real Skia (ImageBitmap, drawVertices) can
+            // load `libskiko-<host>` from disk. compose.desktop.common
+            // is a multiplatform-metadata coordinate without the native
+            // .dylib / .so / .dll attached.
+            implementation(compose.desktop.currentOs)
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)

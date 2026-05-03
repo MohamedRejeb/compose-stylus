@@ -143,6 +143,44 @@ Each `PenStroke` carries its `brush` and a list of `PenStrokePoint`s, so they
 are platform-neutral data — a stroke captured on Desktop renders identically
 when handed back to an Android `PenInkSurface` (and vice versa).
 
+### Reducing stylus latency on Desktop
+
+Compose Desktop normally syncs draws with the display vsync, which adds
+about one frame (~16 ms at 60 Hz) of latency between a pen event and the
+rendered stroke. For drawing-first apps that trade-off is usually worth
+flipping:
+
+- **Quick global switch.** Set `skiko.vsync.enabled` to `false` before
+  Compose initialises:
+
+  ```kotlin
+  fun main() {
+      System.setProperty("skiko.vsync.enabled", "false")
+      application { /* … */ }
+  }
+  ```
+
+- **Scoped per-panel.** Host the surface in a `ComposePanel` built with
+  `RenderSettings(isVsyncEnabled = false)` (Compose Multiplatform 1.8+,
+  currently requires `useSwingGraphics = true`) so only the drawing panel
+  goes vsync-free while the rest of the UI keeps vsync-paced animation.
+
+Both options bring stylus latency close to what Jetpack Ink achieves on
+Android. The trade-offs:
+
+- **Screen tearing** on the in-progress stroke during fast motion.
+- **Animation judder** anywhere in the same Compose host that runs
+  transitions / spinners — Compose schedules recomposition assuming a
+  vsync-paced frame clock.
+- **Unbounded FPS**, so the GPU keeps drawing during idle.
+
+`PenInkSurface` itself does not flip this setting; it affects everything
+in the same Compose host, so the call belongs to the host application.
+This isn't true sub-frame latency the way Android's front-buffered
+`SurfaceControl` is — the frame still goes through the OS compositor —
+but it removes the vsync-imposed wait and is the closest equivalent
+available on JVM/Skiko today.
+
 ## Core API (no Compose)
 
 If you need to attach callbacks outside Compose (e.g. to a `Window`, `View`, `UIView`, or `HTMLElement`):

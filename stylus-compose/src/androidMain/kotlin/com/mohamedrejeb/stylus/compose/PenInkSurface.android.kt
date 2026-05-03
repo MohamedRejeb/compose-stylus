@@ -20,6 +20,8 @@ import androidx.ink.strokes.MutableStrokeInputBatch
 import androidx.ink.strokes.Stroke
 import androidx.ink.strokes.StrokeInput
 import com.mohamedrejeb.stylus.PenEvent
+import com.mohamedrejeb.stylus.PenTool
+import kotlin.math.PI
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -30,10 +32,16 @@ actual fun PenInkSurface(
     modifier: Modifier,
     state: PenInkState,
     brush: PenBrush,
+    @Suppress("UNUSED_PARAMETER") engine: PenInkEngine,
     onStrokesFinished: (List<PenStroke>) -> Unit,
     onPenEvent: (PenEvent) -> Unit,
     content: @Composable BoxScope.() -> Unit,
 ) {
+    // [engine] is intentionally ignored on Android — finished strokes go
+    // through Jetpack Ink's `CanvasStrokeRenderer` and in-progress strokes
+    // through `InProgressStrokesView`'s front-buffered SurfaceControl,
+    // both of which carry their own native tessellation / motion
+    // prediction. The cross-platform engine knob is a Skiko-only concern.
     val renderer = remember { CanvasStrokeRenderer.create() }
     val identityMatrix = remember { Matrix() }
     val inkBrush = remember(brush) { brush.toInkBrush() }
@@ -82,6 +90,14 @@ private fun Stroke.toPenStroke(brush: PenBrush): PenStroke {
     val inputs = this.inputs
     val n = inputs.size
     val points = ArrayList<PenStrokePoint>(n)
+    // Capture the tool from the first input — Ink keeps it constant for the
+    // lifetime of a stroke. Preserving it here is what lets the round-trip
+    // back through `toInkStroke` re-render a finger draw at the same
+    // thickness as the in-progress front-buffer pass: a TOUCH input under
+    // `pressurePen` falls back to Ink's constant-width branch, while
+    // re-feeding it as STYLUS would force the pressure-modulated branch and
+    // make the finished stroke visibly thicker than it was during drag.
+    val tool: PenTool = if (n > 0) inputs[0].toolType.toPenTool() else PenTool.Pen
     for (i in 0 until n) {
         val input: StrokeInput = inputs[i]
         val pressure = if (input.hasPressure) input.pressure else 1f
@@ -111,7 +127,7 @@ private fun Stroke.toPenStroke(brush: PenBrush): PenStroke {
             ),
         )
     }
-    return PenStroke(brush = brush, points = points)
+    return PenStroke(brush = brush, points = points, tool = tool)
 }
 
 /**
@@ -122,6 +138,7 @@ private fun Stroke.toPenStroke(brush: PenBrush): PenStroke {
 private fun PenStroke.toInkStroke(inkBrush: Brush): Stroke? {
     if (points.size < 2) return null
     val batch = MutableStrokeInputBatch()
+    val inkTool = tool.toInputToolType()
     points.forEach { p ->
         // Cartesian tilt → Ink polar (tiltRadians, orientationRadians).
         // Pass NO_TILT / NO_ORIENTATION when the source didn't report tilt
@@ -129,18 +146,26 @@ private fun PenStroke.toInkStroke(inkBrush: Brush): Stroke? {
         // behavior instead of treating "vertical pen" as a real reading.
         val tiltMag = sqrt(p.tiltX * p.tiltX + p.tiltY * p.tiltY)
         if (tiltMag > 0f) {
+            // Ink validates tiltRadians ∈ [0, π/2] and orientationRadians ∈ [0, 2π).
+            // atan2 returns (-π, π] and tiltMag can exceed π/2 if both axes are
+            // tilted near the limit, so clamp/wrap before handing them off.
+            val clampedTilt = tiltMag.coerceIn(0f, (PI / 2).toFloat())
+            val twoPi = (2 * PI).toFloat()
+            val rawOrientation = atan2(p.tiltY, p.tiltX)
+            val wrapped = ((rawOrientation % twoPi) + twoPi) % twoPi
+            val orientation = if (wrapped >= twoPi) 0f else wrapped
             batch.add(
-                type = InputToolType.STYLUS,
+                type = inkTool,
                 x = p.x,
                 y = p.y,
                 elapsedTimeMillis = p.elapsedMillis,
                 pressure = p.pressure,
-                tiltRadians = tiltMag,
-                orientationRadians = atan2(p.tiltY, p.tiltX),
+                tiltRadians = clampedTilt,
+                orientationRadians = orientation,
             )
         } else {
             batch.add(
-                type = InputToolType.STYLUS,
+                type = inkTool,
                 x = p.x,
                 y = p.y,
                 elapsedTimeMillis = p.elapsedMillis,
@@ -149,6 +174,32 @@ private fun PenStroke.toInkStroke(inkBrush: Brush): Stroke? {
         }
     }
     return Stroke(brush = inkBrush, inputs = batch)
+}
+
+/**
+ * Map Ink's tool discriminator onto the cross-platform [PenTool] used by
+ * [PenStroke]. Ink only exposes `STYLUS` / `TOUCH` / `MOUSE` / `UNKNOWN`, so
+ * `Eraser` is collapsed onto `Pen` on input — Android doesn't distinguish a
+ * stylus eraser tip at the Ink layer, and the ambiguity is harmless because
+ * [PenTool.toInputToolType] still routes `Eraser` back to `STYLUS`.
+ */
+private fun InputToolType.toPenTool(): PenTool = when (this) {
+    InputToolType.STYLUS -> PenTool.Pen
+    InputToolType.TOUCH -> PenTool.Touch
+    InputToolType.MOUSE -> PenTool.Mouse
+    else -> PenTool.None
+}
+
+/**
+ * Map a cross-platform [PenTool] onto Ink's [InputToolType]. `Eraser` and
+ * `None` collapse to `STYLUS` because Ink lacks both — `Eraser` is used as a
+ * pressure-sensitive pen, and `None` would otherwise prevent re-rendering a
+ * stroke with an unknown source.
+ */
+private fun PenTool.toInputToolType(): InputToolType = when (this) {
+    PenTool.Pen, PenTool.Eraser, PenTool.None -> InputToolType.STYLUS
+    PenTool.Touch -> InputToolType.TOUCH
+    PenTool.Mouse -> InputToolType.MOUSE
 }
 
 private const val INK_BRUSH_EPSILON: Float = 0.1f
