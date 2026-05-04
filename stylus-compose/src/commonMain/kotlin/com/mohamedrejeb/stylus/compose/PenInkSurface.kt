@@ -77,14 +77,27 @@ enum class PenInkEngine {
  * @param state State holder for finished strokes. Defaults to a freshly
  *   remembered [PenInkState].
  * @param brush Brush used for in-progress strokes. Defaults to [PenBrush.Default].
+ * @param inkEnabled When `false`, the in-progress stroke pipeline is
+ *   suppressed: no new points are recorded, no in-progress geometry is drawn,
+ *   and `onStrokesFinished` does not fire. [onPenEvent] still fires for every
+ *   event so [rememberPenGesturesHandler] (or any other consumer) can drive
+ *   gesture recognition off the same stream while drawing tools are inactive.
+ *   Toggling to `false` mid-stroke finalises the in-flight stroke (it is
+ *   appended to [state] just as if the pen had been lifted) so the toggle
+ *   never leaves a half-recorded stroke dangling. Use this to switch between
+ *   freehand drawing and shape / select tools without tearing down the
+ *   surface — on Android this also keeps Jetpack Ink's front-buffered
+ *   `SurfaceControl` warm, avoiding first-stroke latency on the next
+ *   re-enable.
  * @param engine Renderer to use on Skia-backed targets. Defaults to the
  *   triangle-mesh renderer; flip to [PenInkEngine.SmoothPath] for the
  *   perfect-freehand-style outline renderer when corner / curve artefacts
  *   matter more than per-frame CPU cost. Ignored on Android.
  * @param onStrokesFinished Optional callback fired with the newly-completed
  *   strokes on each pen lift, in addition to them being appended to [state].
+ *   Skipped when [inkEnabled] is `false`.
  * @param onPenEvent Optional raw [PenEvent] callback — fires on hover, move,
- *   press, and release.
+ *   press, and release. Always fires regardless of [inkEnabled].
  * @param content Content drawn on top of the ink surface (e.g. UI overlays).
  */
 @Composable
@@ -92,6 +105,7 @@ expect fun PenInkSurface(
     modifier: Modifier = Modifier,
     state: PenInkState = rememberPenInkState(),
     brush: PenBrush = PenBrush.Default,
+    inkEnabled: Boolean = true,
     engine: PenInkEngine = PenInkEngine.Tessellated,
     onStrokesFinished: (List<PenStroke>) -> Unit = {},
     onPenEvent: (PenEvent) -> Unit = {},

@@ -4,10 +4,12 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -31,6 +33,7 @@ actual fun PenInkSurface(
     modifier: Modifier,
     state: PenInkState,
     brush: PenBrush,
+    inkEnabled: Boolean,
     engine: PenInkEngine,
     onStrokesFinished: (List<PenStroke>) -> Unit,
     onPenEvent: (PenEvent) -> Unit,
@@ -46,19 +49,38 @@ actual fun PenInkSurface(
     // pressure-vs-constant-width branches consistent.
     var activeTool by remember { mutableStateOf(PenTool.Pen) }
 
+    // Read the current value through `rememberUpdatedState` so the
+    // `Modifier.penInput` body — which captures references on first launch
+    // and never re-launches across recompositions — observes flips of
+    // `inkEnabled` immediately. Without this, toggling `inkEnabled` would be
+    // ignored until the next pointer-input keying.
+    val currentInkEnabled by rememberUpdatedState(inkEnabled)
+    val currentBrush by rememberUpdatedState(brush)
+    val currentOnStrokesFinished by rememberUpdatedState(onStrokesFinished)
+    val currentOnPenEvent by rememberUpdatedState(onPenEvent)
+
     fun finalizeActiveStroke() {
         if (active.size >= 2) {
-            val finished = PenStroke(brush = brush, points = active.toList(), tool = activeTool)
+            val finished = PenStroke(brush = currentBrush, points = active.toList(), tool = activeTool)
             state.appendStrokes(listOf(finished))
-            onStrokesFinished(listOf(finished))
+            currentOnStrokesFinished(listOf(finished))
         }
         predictor.reset()
         active.clear()
     }
 
+    // Toggling `inkEnabled` to false mid-stroke finalises the in-flight
+    // stroke so the user's drag gets persisted rather than silently dropped.
+    // `LaunchedEffect` keys on the disable transition; we explicitly only act
+    // when the new value is false to avoid double-finalising on re-enable.
+    LaunchedEffect(inkEnabled) {
+        if (!inkEnabled) finalizeActiveStroke()
+    }
+
     Box(
         modifier = modifier.penInput { event ->
-            onPenEvent(event)
+            currentOnPenEvent(event)
+            if (!currentInkEnabled) return@penInput
             when (event.type) {
                 PenEventType.Press -> {
                     strokeStartMs = event.timestamp
@@ -95,21 +117,25 @@ actual fun PenInkSurface(
         },
     ) {
         Canvas(modifier = Modifier.matchParentSize()) {
-            // Finished strokes: cached per-stroke geometry — zero per-frame
-            // tessellation work for the chosen engine.
+            // Finished strokes always render — they are durable user content
+            // that should remain visible regardless of which tool is active.
             state.finishedStrokes.forEach { stroke ->
                 drawFinishedStroke(stroke, engine)
             }
 
-            // Active stroke: rebuilt every frame because it grows on each
-            // pen event. Snapshot copy first so a concurrent write to the
-            // SnapshotStateList from another thread can't trigger a
-            // fail-fast iterator throw.
-            val snapshot = active.snapshotPoints()
-            if (snapshot.isNotEmpty()) {
-                val predicted = predictor.predict()
-                val toDraw = if (predicted != null) snapshot + predicted else snapshot
-                drawActiveStroke(toDraw, brush, engine)
+            // Active stroke: skipped entirely when ink is disabled. The
+            // recording branch above already short-circuits on
+            // `inkEnabled = false`, so `active` will be empty here in steady
+            // state — but the explicit guard handles the inverse race where
+            // a flip-to-false interleaves between recording and the next
+            // frame.
+            if (inkEnabled) {
+                val snapshot = active.snapshotPoints()
+                if (snapshot.isNotEmpty()) {
+                    val predicted = predictor.predict()
+                    val toDraw = if (predicted != null) snapshot + predicted else snapshot
+                    drawActiveStroke(toDraw, brush, engine)
+                }
             }
         }
         content()

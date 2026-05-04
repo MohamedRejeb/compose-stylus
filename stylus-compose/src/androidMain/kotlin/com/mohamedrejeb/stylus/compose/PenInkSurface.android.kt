@@ -32,6 +32,7 @@ actual fun PenInkSurface(
     modifier: Modifier,
     state: PenInkState,
     brush: PenBrush,
+    inkEnabled: Boolean,
     @Suppress("UNUSED_PARAMETER") engine: PenInkEngine,
     onStrokesFinished: (List<PenStroke>) -> Unit,
     onPenEvent: (PenEvent) -> Unit,
@@ -48,7 +49,8 @@ actual fun PenInkSurface(
 
     Box(modifier = modifier.penInput(onEvent = onPenEvent)) {
         // 1. Persisted finished strokes — drawn via Ink's CanvasStrokeRenderer
-        //    so the visual matches the in-progress front-buffer pass.
+        //    so the visual matches the in-progress front-buffer pass. These
+        //    are durable user content and render regardless of [inkEnabled].
         Canvas(modifier = Modifier.matchParentSize()) {
             drawIntoCanvas { canvas ->
                 val nativeCanvas = canvas.nativeCanvas
@@ -58,15 +60,28 @@ actual fun PenInkSurface(
                 }
             }
         }
-        // 2. In-progress stroke — rendered on the front buffer for low latency.
-        InProgressStrokes(
-            defaultBrush = inkBrush,
-            onStrokesFinished = { strokes ->
-                val penStrokes = strokes.map { it.toPenStroke(brush) }
-                state.appendStrokes(penStrokes)
-                onStrokesFinished(penStrokes)
-            },
-        )
+        // 2. In-progress stroke — rendered on the front buffer for low
+        //    latency. Conditionally mounted: when [inkEnabled] is false the
+        //    `InProgressStrokesView` is removed from the tree, releasing its
+        //    `SurfaceControl` and ensuring touch events flow only to the
+        //    caller's gesture handler (via `Modifier.penInput` -> `onPenEvent`).
+        //    The cost on re-enable is one front-buffer surface creation,
+        //    which is amortised across the next stroke. Consumers that
+        //    switch tools many times per second should keep this `true` and
+        //    instead use a no-op brush, but for typical tool-palette UX the
+        //    conditional mount is the right tradeoff (and avoids leaking
+        //    pen events into Ink's own gesture recognition while a
+        //    select / shape tool is active).
+        if (inkEnabled) {
+            InProgressStrokes(
+                defaultBrush = inkBrush,
+                onStrokesFinished = { strokes ->
+                    val penStrokes = strokes.map { it.toPenStroke(brush) }
+                    state.appendStrokes(penStrokes)
+                    onStrokesFinished(penStrokes)
+                },
+            )
+        }
         // 3. Caller overlay content.
         content()
     }
