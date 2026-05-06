@@ -55,7 +55,17 @@ actual fun PenInkSurface(
             drawIntoCanvas { canvas ->
                 val nativeCanvas = canvas.nativeCanvas
                 state.finishedStrokes.forEach { penStroke ->
-                    val inkStroke = penStroke.toInkStroke(inkBrush) ?: return@forEach
+                    // Prefer the original Ink Stroke when this stroke was
+                    // captured on Android. Reconstructing a Stroke from
+                    // [PenStrokePoint] drops `strokeUnitLengthCm` and forces
+                    // Ink to re-tessellate a fresh `PartitionedMesh`, which
+                    // produces a visibly thicker dry stroke than the wet
+                    // front-buffered pass. Fall back to reconstruction for
+                    // cross-platform strokes that arrived without a native
+                    // companion (e.g. loaded from disk on a different OS).
+                    val inkStroke = (penStroke.nativeStroke as? Stroke)
+                        ?: penStroke.toInkStroke(inkBrush)
+                        ?: return@forEach
                     renderer.draw(nativeCanvas, inkStroke, identityMatrix)
                 }
             }
@@ -142,7 +152,12 @@ private fun Stroke.toPenStroke(brush: PenBrush): PenStroke {
             ),
         )
     }
-    return PenStroke(brush = brush, points = points, tool = tool)
+    return PenStroke(
+        brush = brush,
+        points = points,
+        tool = tool,
+        nativeStroke = this,
+    )
 }
 
 /**

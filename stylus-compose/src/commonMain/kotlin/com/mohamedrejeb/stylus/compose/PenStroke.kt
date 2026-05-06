@@ -44,6 +44,19 @@ class PenStroke internal constructor(
     val brush: PenBrush,
     val points: List<PenStrokePoint>,
     val tool: PenTool = PenTool.Pen,
+    /**
+     * Platform-native stroke representation, when one is available on the
+     * capturing target. On Android this holds the original
+     * `androidx.ink.strokes.Stroke` so the persisted canvas can re-render
+     * via [CanvasStrokeRenderer] using the exact `PartitionedMesh` Ink
+     * tessellated during the front-buffered in-progress pass — re-deriving
+     * from [points] would drop [StrokeInput.strokeUnitLengthCm] and the
+     * cached mesh, which makes the dry stroke visibly thicker than the
+     * wet one. Null when the stroke did not originate from a platform
+     * that uses native stroke objects, or when it was deserialized from
+     * another platform.
+     */
+    internal val nativeStroke: Any? = null,
 ) {
     /** Axis-aligned bounding box of all sampled points. Computed lazily. */
     val bounds: Rect by lazy { computeBounds(points) }
